@@ -110,7 +110,6 @@ class DQNAgent:
 
 
 if __name__ == "__main__":
-    # in case of CartPole-v1, you can play until 500 time step
     env = gym.make('MountainCar-v0')
     # get size of state and action from environment
     state_size = env.observation_space.shape[0]
