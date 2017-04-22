@@ -12,68 +12,63 @@ from keras import backend as K
 EPISODES = 300
 
 
+# This is Actor Critic agent for the Cartpole
+# Actor Critic is Policy Gradient + Policy Iteration
+# Actor network is policy network, Critic network is Q network
 class ACAgent:
     def __init__(self, state_size, action_size):
-        # Cartpole이 학습하는 것을 보려면 True로 바꿀 것
+        # if you want to see Cartpole learning, then change to True
         self.render = False
-
-        # state와 action의 크기를 가져와서 모델을 생성하는데 사용함
+        # get size of state and action
         self.state_size = state_size
         self.action_size = action_size
-
-        # Cartpole Actor-Critic에 필요한 Hyperparameter들
+        # These are hyper parameters for the Policy Gradient
         self.discount_factor = 0.99
-        self.actor_lr = 0.001
-        self.critic_lr = 0.01
+        self.actor_learning_rate = 0.001
+        self.critic_learning_rate = 0.01
         self.batch_size = 32
         self.train_start = 1000
         self.memory = deque(maxlen=10000)
-
-        # Actor-Critic C에 필요한 actor 네트워크와 critic 네트워크를 생성
+        # create actor and critic models
         self.actor, self.critic = self.build_model()
-
-        # actor 네트워크를 학습시키기 위한 optimizer 를 만듬
+        # create optimizer for the actor model
         self.actor_optimizer = self.actor_optimizer()
 
-    # Deep Neural Network 를 통해서 정책과 가치를 근사
-    # actor -> 상태가 입력, 각 행동에 대한 확률이 출력인 모델을 생성
-    # critic -> 상태가 입력, 상태에 대한 가치가 출력인 모델을 생성
+    # actor -> (input : state), (output : probability of each action)
+    # critic -> (input : state), (output : value for the state)
     def build_model(self):
-        # actor 네트워크 생성
+        # actor network
         actor = Sequential()
         actor.add(Dense(24, input_dim=self.state_size, activation='relu', kernel_initializer='glorot_uniform'))
         actor.add(Dense(24, activation='relu', kernel_initializer='glorot_uniform'))
         actor.add(Dense(self.action_size, activation='softmax', kernel_initializer='glorot_uniform'))
-
-        # critic 네트워크 생성
+        # critic network
         critic = Sequential()
         critic.add(Dense(24, input_dim=self.state_size, activation='relu', kernel_initializer="he_uniform"))
         critic.add(Dense(24, activation='relu', kernel_initializer='he_uniform'))
         critic.add(Dense(1, activation='linear', kernel_initializer='he_uniform'))
-        critic.compile(loss="mse", optimizer=Adam(lr=self.critic_lr))
-
+        critic.compile(loss="mse", optimizer=Adam(lr=self.critic_learning_rate))
+        # summary actor and critic networks
         actor.summary()
         critic.summary()
-
         return actor, critic
 
+    # make loss function for actor network
+    # [log(action probability) * return] will be input for the back propagation
     def actor_optimizer(self):
         action = K.placeholder(shape=[None, self.action_size])
         advantages = K.placeholder(shape=[None, ])
 
-        # Policy Gradient 의 핵심
-        # log(정책) * return 의 gradient 를 구해서 최대화시킴
         good_prob = K.sum(action * self.actor.output, axis=1)
         eligibility = K.log(good_prob + 1e-10) * K.stop_gradient(advantages)
         loss = -K.sum(eligibility)
 
-        optimizer = Adam(lr=self.actor_lr)
+        optimizer = Adam(lr=self.actor_learning_rate)
         updates = optimizer.get_updates(self.actor.trainable_weights, [], loss)
         train = K.function([self.actor.input, action, advantages], [], updates=updates)
-
         return train
 
-    # replay memory에서 batch_size 만큼의 샘플들을 무작위로 뽑아서 학습
+    # pick samples randomly from replay memory (with batch_size)
     def train_replay(self):
         if len(self.memory) < self.train_start:
             return
@@ -88,7 +83,7 @@ class ACAgent:
             state, action, reward, next_state, done = mini_batch[i]
             value = self.critic.predict(state)[0]
 
-            # s'의 state value를 가져와서 critic 네트워크를 업데이트함.
+            #
             if done:
                 target = reward
             else:
@@ -97,45 +92,45 @@ class ACAgent:
             update_input[i] = state
             update_action[i] = action
             update_target[i] = target
+            # calculate advantage function(Q function - value function)
             advantages[i] = target - value
 
-        # 학습할 정답인 타겟과 현재 자신의 값의 minibatch를 만들고 그것으로 한 번에 critic 모델 업데이트
+        # updating critic network is similar with DQN update
         self.critic.fit(update_input, update_target, batch_size=self.batch_size, epochs=1, verbose=0)
-
-        # 상태, 행동, 그에 따른 (target-value)를 넣어 actor 네트워크를 학습함
+        # with advantage, we can evaluate how good the action is
+        # with the information of policy evaluation through advantage function, update the actor network
         self.actor_optimizer([update_input, update_action, advantages])
 
-    # 핻동의 선택은 actor 네트워크에 대해서 각 행동에 대한 확률로 정책을 사용
+    # using the output of policy network, pick action stochastically
     def get_action(self, state):
         policy = self.actor.predict(state, batch_size=1).flatten()
         return np.random.choice(self.action_size, 1, p=policy)[0]
 
-    # 각 스텝의 <s, a, r, s'>을 저장
+    # save sample <s, a ,r, s'> to the replay memory
     def replay_memory(self, state, action, reward, next_state, done):
         act = np.zeros(self.action_size)
         act[action] = 1
         self.memory.append((state, act, reward, next_state, done))
 
-    # 저장한 모델을 불러옴
     def load_model(self, name):
         self.actor.load_weights(name)
         self.critic.load_weights(name)
 
-    # 학습된 모델을 저장함
     def save_model(self, name1, name2):
         self.actor.save_weights(name1)
         self.critic.save_weights(name2)
 
 
 if __name__ == "__main__":
-    # CartPole-v1의 경우 500 타임스텝까지 플레이가능
+    # In case of CartPole-v1, you can play until 500 time step
     env = gym.make('CartPole-v1')
-
-    # 환경으로부터 상태와 행동의 크기를 가져옴
+    # get size of state and action from environment
     state_size = env.observation_space.shape[0]
     action_size = env.action_space.n
 
+    # make Actor Critic agent
     agent = ACAgent(state_size, action_size)
+
     scores, episodes = [], []
 
     for e in range(EPISODES):
@@ -149,28 +144,28 @@ if __name__ == "__main__":
             if agent.render:
                 env.render()
 
-            # 현재 상태에서 행동을 선택하고 한 스텝을 진행
+            # get action for the current state and go one step in environment
             action = agent.get_action(state)
             next_state, reward, done, info = env.step(action)
             next_state = np.reshape(next_state, [1, state_size])
-            # 에피소드를 끝나게 한 행동에 대해서 -100의 패널티를 줌
+            # if an action make the episode end, then gives penalty of -100
             reward = reward if not done or score == 499 else -100
 
-            # <s, a, r, s'>을 replay memory에 저장
+            # save the sample <s, a, r, s'> to the replay memory
             agent.replay_memory(state, action, reward, next_state, done)
-            # 매 타임스텝마다 학습을 진행
+            # every time step do the training
             agent.train_replay()
 
             score += reward
             state = next_state
 
             if done:
-                # 각 에피소드마다 cartpole이 서있었던 타임스텝을 plot
+                # every episode, plot the play time
                 score = score if score == 500 else score + 100
                 scores.append(score)
                 episodes.append(e)
                 pylab.plot(episodes, scores, 'b')
-                pylab.savefig("./save_graph/Cartpole_ActorCritc.png")
+                pylab.savefig("./save_graph/Cartpole_ActorCritic.png")
                 print("episode:", e, "  score:", score, "  memory length:", len(agent.memory))
 
                 # 지난 10 에피소드의 평균이 490 이상이면 학습을 멈춤
@@ -178,5 +173,5 @@ if __name__ == "__main__":
                     sys.exit()
 
         # 50 에피소드마다 학습 모델을 저장
-        if e % 50 == 0:
-            agent.save_model("./save_model/Cartpole_Actor.h5", "./save_model/Cartpole_Critic.h5")
+        # if e % 50 == 0:
+        #     agent.save_model("./save_model/Cartpole_Actor.h5", "./save_model/Cartpole_Critic.h5")

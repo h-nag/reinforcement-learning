@@ -52,7 +52,7 @@ class PGAgent:
         discounted_rewards = K.placeholder(shape=[None, ])
 
         good_prob = K.sum(action * self.model.output, axis=1)
-        eligibility = K.log(good_prob) * discounted_rewards
+        eligibility = K.log(good_prob) * K.stop_gradient(discounted_rewards)
         loss = -K.sum(eligibility)
 
         optimizer = Adam(lr=self.learning_rate)
@@ -127,6 +127,7 @@ if __name__ == "__main__":
             action = agent.get_action(state)
             next_state, reward, done, info = env.step(action)
             next_state = np.reshape(next_state, [1, state_size])
+            # if an action make the episode end, then gives penalty of -100
             reward = reward if not done or score == 499 else -100
 
             # save the sample <s, a, r> to the memory
@@ -144,7 +145,7 @@ if __name__ == "__main__":
                 scores.append(score)
                 episodes.append(e)
                 pylab.plot(episodes, scores, 'b')
-                pylab.savefig("./save_graph/Cartpole_PG.png")
+                pylab.savefig("./save_graph/Cartpole_PG_with_stopgradient.png")
                 print("episode:", e, "  score:", score)
 
                 # if the mean of scores of last 10 episode is bigger than 490
