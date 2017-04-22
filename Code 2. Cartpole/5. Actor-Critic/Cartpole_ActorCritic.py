@@ -168,10 +168,11 @@ if __name__ == "__main__":
                 pylab.savefig("./save_graph/Cartpole_ActorCritic.png")
                 print("episode:", e, "  score:", score, "  memory length:", len(agent.memory))
 
-                # 지난 10 에피소드의 평균이 490 이상이면 학습을 멈춤
+                # if the mean of scores of last 10 episode is bigger than 490
+                # stop training
                 if np.mean(scores[-min(10, len(scores)):]) > 490:
                     sys.exit()
 
-        # 50 에피소드마다 학습 모델을 저장
+        # save the model
         # if e % 50 == 0:
         #     agent.save_model("./save_model/Cartpole_Actor.h5", "./save_model/Cartpole_Critic.h5")
