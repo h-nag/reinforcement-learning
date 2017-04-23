@@ -141,13 +141,16 @@ if __name__ == "__main__":
         observe = env.reset()
         next_observe = observe
 
+        # this is one of DeepMind's idea.
+        # just do nothing at the start of episode to avoid sub-optimal
         for _ in range(random.randint(1, agent.no_op_steps)):
             observe = next_observe
             next_observe, _, _, _ = env.step(1)
 
+        # At start of episode, there is no preceding frame. So just copy initial states to make history
         state = pre_processing(next_observe, observe)
         history = np.stack((state, state, state, state), axis=2)
-        history = history.reshape(1, history.shape[0], history.shape[1], history.shape[2])
+        history = np.reshape([history], (1, 84, 84, 4))
 
         while not done:
             if agent.render:
@@ -170,6 +173,7 @@ if __name__ == "__main__":
             # save the sample <s, a, r, s'> to the replay memory
             agent.replay_memory(history, action, reward, next_history, done)
 
+            # every some time interval, train model and update the target model with model
             if global_step % agent.train_interval == 0:
                 agent.train_replay()
             if global_step % agent.update_target_rate == 0:
