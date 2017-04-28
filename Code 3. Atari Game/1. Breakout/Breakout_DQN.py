@@ -21,16 +21,16 @@ class DQNAgent:
         self.state_size = (84, 84, 4)
         self.action_size = action_size
         # parameters about epsilon
+        self.train_interval = 4
         self.epsilon = 1.0
         self.epsilon_start = 1.0
         self.epsilon_end = 0.1
         self.epsilon_decay = 1000000.
-        self.epsilon_decay_step = (self.epsilon_start - self.epsilon_end) / self.epsilon_decay
+        self.epsilon_decay_step = (self.epsilon_start - self.epsilon_end) * self.train_interval / self.epsilon_decay
 
         self.batch_size = 32
         self.train_start = 20000
         self.update_target_rate = 10000
-        self.train_interval = 4
         self.discount_factor = 0.99
         self.memory = deque(maxlen=400000)
         self.no_op_steps = 30
@@ -42,6 +42,12 @@ class DQNAgent:
         self.model = self.build_model()
         self.target_model = self.build_model()
         self.update_target_model()
+
+        self.sess = tf.Session()
+        self.avg_q_max = 0
+        self.summary_placeholders, self.update_ops, self.summary_op = \
+            self.setup_summary()
+        self.summary_writer = tf.summary.FileWriter('summary/BreakoutDeterministic-v3', self.sess.graph)
 
     # if the error is in the interval [-1, 1], then the cost is quadratic to the error
     # But outside the interval, the cost is linear to the error
@@ -70,7 +76,7 @@ class DQNAgent:
 
     # get action from model using epsilon-greedy policy
     def get_action(self, history):
-        history = np.float32(history / 255.0)
+        history = np.float32(np.reshape([history], (1, 84, 84, 4)) / 255.0)
         if np.random.rand() <= self.epsilon:
             return random.randrange(self.action_size)
         else:
@@ -79,7 +85,7 @@ class DQNAgent:
 
     # save sample <s,a,r,s'> to the replay memory
     def replay_memory(self, history, action, reward, next_history, done):
-        self.memory.append((history, action, reward, next_history, done))
+        self.memory.append([list(history), action, reward, list(next_history), done])
 
     # pick samples randomly from replay memory (with batch_size)
     def train_replay(self):
@@ -87,33 +93,46 @@ class DQNAgent:
             return
         if self.epsilon > self.epsilon_end:
             self.epsilon -= self.epsilon_decay_step
-        batch_size = min(self.batch_size, len(self.memory))
-        mini_batch = random.sample(self.memory, batch_size)
 
-        update_input = np.zeros((batch_size, self.state_size[0], self.state_size[1], self.state_size[2]))
-        update_target = np.zeros((batch_size, self.action_size))
+        mini_batch = random.sample(self.memory, self.batch_size)
 
-        for i in range(batch_size):
-            history, action, reward, next_history, done = mini_batch[i]
-            history = np.float32(history / 255.)
-            next_history = np.float32(next_history / 255.)
-            target = self.model.predict(history)[0]
+        history, action, reward, next_history, done = [], [], [], [], []
+        for data in mini_batch:
+            history.append(data[0])
+            action.append(data[1])
+            reward.append(data[2])
+            next_history.append(data[3])
+            done.append(data[4])
 
-            if done:
-                target[action] = reward
-            else:
-                target[action] = reward + self.discount_factor * np.amax(self.target_model.predict(next_history)[0])
+        done = np.array(done) * 0
 
-            update_target[i] = target
-            update_input[i] = history
+        update_target = self.model.predict(history)
+        target = self.target_model.predict(next_history)
+        target = reward + (1 - done) * self.discount_factor * np.amax(target, axis=1)
 
-        self.model.fit(update_input, update_target, batch_size=batch_size, epochs=1, verbose=0)
+        for update in update_target:
+            update[action[i]] = target[i]
+
+        self.model.fit(history, update_target, batch_size=self.batch_size, epochs=1, verbose=0)
 
     def load_model(self, name):
         self.model.load_weights(name)
 
     def save_model(self, name):
         self.model.save_weights(name)
+
+    def setup_summary(self):
+        episode_total_reward = tf.Variable(0.)
+        tf.summary.scalar('BreakoutDeterministic-v3/Total Reward/Episode', episode_total_reward)
+        episode_avg_max_q = tf.Variable(0.)
+        tf.summary.scalar('BreakoutDeterministic-v3/Average Max Q/Episode', episode_avg_max_q)
+        episode_duration = tf.Variable(0.)
+        tf.summary.scalar('BreakoutDeterministic-v3/Duration/Episode', episode_duration)
+        summary_vars = [episode_total_reward, episode_avg_max_q, episode_duration]
+        summary_placeholders = [tf.placeholder(tf.float32) for _ in range(len(summary_vars))]
+        update_ops = [summary_vars[i].assign(summary_placeholders[i]) for i in range(len(summary_vars))]
+        summary_op = tf.summary.merge_all()
+        return summary_placeholders, update_ops, summary_op
 
 
 # 210*160*3(color) --> 84*84(mono)
@@ -131,7 +150,8 @@ if __name__ == "__main__":
     action_size = env.action_space.n
     agent = DQNAgent(action_size)
 
-    scores, episodes, global_step = [], [], 0
+    scores, episodes, global_step, step = [], [], 0, 0
+    agent.load_model("./save_model/Breakout_DQN.h5")
 
     for e in range(EPISODES):
         done = False
@@ -150,20 +170,21 @@ if __name__ == "__main__":
         # At start of episode, there is no preceding frame. So just copy initial states to make history
         state = pre_processing(next_observe, observe)
         history = np.stack((state, state, state, state), axis=2)
-        history = np.reshape([history], (1, 84, 84, 4))
+        history = np.reshape(history, (84, 84, 4))
 
         while not done:
             if agent.render:
                 env.render()
             global_step += 1
+            step += 1
             observe = next_observe
             # get action for the current history and go one step in environment
             action = agent.get_action(history)
             next_observe, reward, done, info = env.step(action)
             # pre-process the observation --> history
             next_state = pre_processing(next_observe, observe)
-            next_state = np.reshape([next_state], (1, 84, 84, 1))
-            next_history = np.append(next_state, history[:, :, :, :3], axis=3)
+            next_state = np.reshape(next_state, (84, 84, 1))
+            next_history = np.append(next_state, history[:, :, :3], axis=2)
 
             # if the ball is fall, then the agent is dead --> episode is not over
             if start_life > info['ale.lives']:
@@ -183,19 +204,30 @@ if __name__ == "__main__":
             # if agent is dead, then reset the history
             if dead:
                 history = np.stack((next_state, next_state, next_state, next_state), axis=2)
-                history = np.reshape([history], (1, 84, 84, 4))
+                history = np.reshape(history, (84, 84, 4))
                 dead = False
             else:
                 history = next_history
 
             # if done, plot the score over episodes
             if done:
-                scores.append(score)
-                episodes.append(e)
-                pylab.plot(episodes, scores, 'b')
-                pylab.savefig("./save_graph/Breakout_DQN.png")
+                # scores.append(score)
+                # episodes.append(e)
+                # pylab.plot(episodes, scores, 'b')
+                # pylab.savefig("./save_graph/Breakout_DQN.png")
                 print("episode:", e, "  score:", score, "  memory length:", len(agent.memory),
                       "  epsilon:", agent.epsilon, "  global_step:", global_step)
+
+                stats = [score, agent.avg_q_max / float(step),
+                         step]
+                for i in range(len(stats)):
+                    agent.sess.run(agent.update_ops[i], feed_dict={
+                        agent.summary_placeholders[i]: float(stats[i])
+                    })
+                summary_str = agent.sess.run(agent.summary_op)
+                agent.summary_writer.add_summary(summary_str, e + 1)
+                agent.avg_q_max = 0
+                step = 0
 
         if e % 1000 == 0:
             agent.save_model("./save_model/Breakout_DQN.h5")

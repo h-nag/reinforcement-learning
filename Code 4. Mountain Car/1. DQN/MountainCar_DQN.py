@@ -17,7 +17,7 @@ EPISODES = 5000
 class DQNAgent:
     def __init__(self, state_size, action_size):
         # if you want to see MountainCar learning, then change to True
-        self.render = False
+        self.render = True
 
         # get size of state and action
         self.state_size = state_size
@@ -31,7 +31,6 @@ class DQNAgent:
         self.epsilon_decay = 0.99999
         self.epsilon_min = 0.1
         self.batch_size = 64
-        self.train_start = 100000
         # create replay memory using deque
         self.memory = deque(maxlen=100000)
 
@@ -70,9 +69,6 @@ class DQNAgent:
 
     # pick samples randomly from replay memory (with batch_size)
     def train_replay(self):
-        if len(self.memory) < self.train_start:
-            return
-
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
@@ -113,19 +109,20 @@ if __name__ == "__main__":
     env = gym.make('MountainCar-v0')
     # get size of state and action from environment
     state_size = env.observation_space.shape[0]
-    action_size = 2 # env.action_space.n
+    action_size = 2
     agent = DQNAgent(state_size, action_size)
 
     scores, episodes = [], []
     action_fake = 0
     goal_position = 0.5
     global_step = 0
+    at_top = False
 
     for e in range(EPISODES):
         done = False
         score = 0
         state = env.reset()
-        at_top = False
+
         state = np.reshape(state, [1, state_size])
 
         while not done:
@@ -139,6 +136,9 @@ if __name__ == "__main__":
             if action == 1:
                 action_fake = 2
 
+            env.step(action_fake)
+            env.step(action_fake)
+            env.step(action_fake)
             next_state, reward, done, info = env.step(action_fake)
             next_state = np.reshape(next_state, [1, state_size])
 
@@ -148,7 +148,8 @@ if __name__ == "__main__":
             # save the sample <s, a, r, s'> to the replay memory
             agent.replay_memory(state, action, reward, next_state, done)
             # every time step do the training
-            agent.train_replay()
+            if at_top:
+                agent.train_replay()
             score += reward
             state = next_state
 
