@@ -67,6 +67,7 @@ class DQNAgent:
     # save sample <s,a,r,s'> to the replay memory
     def replay_memory(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
+
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
@@ -74,6 +75,7 @@ class DQNAgent:
     def train_replay(self):
         if len(self.memory) < self.train_start:
             return
+
         batch_size = min(self.batch_size, len(self.memory))
         mini_batch = random.sample(self.memory, batch_size)
 
@@ -148,7 +150,7 @@ if __name__ == "__main__":
                 agent.update_target_model()
 
                 # every episode, plot the play time
-                score = score if score == 500 else score + 100
+                score = score if score == 500 else score + 101
                 scores.append(score)
                 episodes.append(e)
                 pylab.plot(episodes, scores, 'b')
