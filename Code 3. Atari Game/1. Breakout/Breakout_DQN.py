@@ -54,8 +54,12 @@ class DQNAgent:
     # if the error is in the interval [-1, 1], then the cost is quadratic to the error
     # But outside the interval, the cost is linear to the error
     def huber_loss(self, target, prediction):
-        error = target - prediction
-        return tf.where(tf.abs(error) < 1, 0.5 * tf.square(error), tf.abs(error) - 0.5)
+        error = tf.abs(target - prediction)
+        quadratic_part = tf.clip_by_value(error, 0.0, 1.0)
+        linear_part = error - quadratic_part
+        return tf.reduce_mean(0.5 * tf.square(quadratic_part) + linear_part)
+        # error = tf.reduce_sum(target - prediction, reduction_indices=1)
+        # return tf.where(tf.abs(error) < 1, 0.5 * tf.square(error), tf.abs(error) - 0.5)
 
     # approximate Q function using Convolution Neural Network
     # state is input and Q Value of each action is output of network
