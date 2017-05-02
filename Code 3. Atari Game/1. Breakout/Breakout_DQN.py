@@ -24,21 +24,20 @@ class DQNAgent:
         self.epsilon = 1.0
         self.epsilon_start, self.epsilon_end = 1.0, 0.1
         self.epsilon_decay = (self.epsilon_start - self.epsilon_end) / 1000000.
-
+        # parameters about training
         self.batch_size = 32
-        self.train_start = 20000
-        self.update_target_interval = 10000
         self.discount_factor = 0.99
+        self.train_start = 200
+        self.update_target_interval = 10000
         self.memory = deque(maxlen=200000)
-        self.no_op_steps = 30
-        # build
+        # build model and target model. Then update target model with model
         self.model = self.build_model()
         self.target_model = self.build_model()
         self.update_target_model()
 
+        # setting tf summary for tensorboard
         self.sess = tf.InteractiveSession()
         K.set_session(self.sess)
-
         self.avg_q_max, self.avg_loss = 0, 0
         self.summary_placeholders, self.update_ops, self.summary_op = self.setup_summary()
         self.summary_writer = tf.summary.FileWriter('summary/Breakout_DQN', self.sess.graph)
@@ -76,29 +75,29 @@ class DQNAgent:
             return np.argmax(self.model.predict(history)[0])
 
     # save sample <s,a,r,s'> to the replay memory
-    def replay_memory(self, history, action, reward, next_history, dead):
-        self.memory.append((np.copy(history), action, reward, np.copy(next_history), dead))
+    def replay_memory(self, history, action, reward, next_history, live):
+        self.memory.append((np.copy(history), action, reward, np.copy(next_history), live))
 
     def train_replay(self):
         if len(self.memory) < self.train_start:
             return
+
         if self.epsilon > self.epsilon_end:
             self.epsilon -= self.epsilon_decay
+
         mini_batch = random.sample(self.memory, self.batch_size)
 
         history = np.zeros((self.batch_size, self.state_size[0], self.state_size[1], self.state_size[2]))
         next_history = np.zeros((self.batch_size, self.state_size[0], self.state_size[1], self.state_size[2]))
-        action, reward, dead = [], [], []
-
+        action, reward, live = [], [], []
         for i in range(self.batch_size):
             history[i] = np.float32(mini_batch[i][0] / 255.)
-            next_history[i] = np.float32(mini_batch[i][3] / 255.)
             action.append(mini_batch[i][1])
             reward.append(mini_batch[i][2])
-            dead.append(mini_batch[i][4])
+            next_history[i] = np.float32(mini_batch[i][3] / 255.)
+            live.append(mini_batch[i][4])
 
-        dead = np.array(dead) + 0
-        target_value = reward + (1 - dead)*self.discount_factor*np.amax(self.target_model.predict(next_history), axis=1)
+        target_value = reward + np.array(live) * self.discount_factor * np.amax(self.target_model.predict(next_history))
         target = self.model.predict(history)
         for i in range(self.batch_size):
             target[i][action[i]] = target_value[i]
@@ -146,10 +145,6 @@ if __name__ == "__main__":
         step, score, start_life = 0, 0, 5
         observe = env.reset()
 
-        # just do nothing at the start of episode to avoid sub-optimal
-        for _ in range(random.randint(1, agent.no_op_steps)):
-            observe, _, _, _ = env.step(1)
-
         # At start of episode, there is no preceding frame. So just copy initial states to make history
         state = pre_processing(observe)
         history = np.stack((state, state, state, state), axis=2)
@@ -160,7 +155,7 @@ if __name__ == "__main__":
                 env.render()
             global_step += 1
             step += 1
-
+            live = 1
             # get action for the current history and go one step in environment
             action = agent.get_action(history)
             observe, reward, done, info = env.step(action)
@@ -174,35 +169,30 @@ if __name__ == "__main__":
 
             # if the ball is fall, then the agent is dead --> episode is not over
             if start_life > info['ale.lives']:
-                dead = True
+                live = 0
                 start_life = info['ale.lives']
 
             # save the sample <s, a, r, s'> to the replay memory
-            agent.replay_memory(history, action, reward, next_history, dead)
+            agent.replay_memory(history, action, reward, next_history, live)
+            # train model with replay memory
             agent.train_replay()
             # update the target model with model
             if global_step % agent.update_target_interval == 0:
                 agent.update_target_model()
-            score += reward
 
-            # if agent is dead, then reset the history
-            if dead:
-                dead = False
-            else:
-                history = next_history
+            score += reward
+            history = next_history
 
             # if done, plot the score over episodes
             if done:
+                print("episode:", e, "  score:", score, "  epsilon:", agent.epsilon, "  global_step:", global_step,
+                      "  average_q:", agent.avg_q_max/float(step), "  average loss:", agent.avg_loss/float(step))
+
                 stats = [score, agent.avg_q_max / float(step), agent.avg_loss / float(step)]
                 for i in range(len(stats)):
                     agent.sess.run(agent.update_ops[i], feed_dict={agent.summary_placeholders[i]: float(stats[i])})
                 summary_str = agent.sess.run(agent.summary_op)
                 agent.summary_writer.add_summary(summary_str, e + 1)
-
-                print("episode:", e, "  score:", score, "  memory length:", len(agent.memory),
-                      "  epsilon:", agent.epsilon, "  global_step:", global_step, "  average_q:",
-                      agent.avg_q_max/float(step), "  average loss:", agent.avg_loss/float(step))
-
                 agent.avg_q_max, agent.avg_loss = 0, 0
 
         if e % 1000 == 0:
