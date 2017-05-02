@@ -112,15 +112,13 @@ class DQNAgent:
     def setup_summary(self):
         episode_total_reward = tf.Variable(0.)
         episode_avg_max_q = tf.Variable(0.)
-        episode_duration = tf.Variable(0.)
         episode_avg_loss = tf.Variable(0.)
 
         tf.summary.scalar('Total Reward/Episode', episode_total_reward)
         tf.summary.scalar('Average Max Q/Episode', episode_avg_max_q)
-        tf.summary.scalar('Duration/Episode', episode_duration)
         tf.summary.scalar('Average Loss/Episode', episode_avg_loss)
 
-        summary_vars = [episode_total_reward, episode_avg_max_q, episode_duration, episode_avg_loss]
+        summary_vars = [episode_total_reward, episode_avg_max_q, episode_avg_loss]
         summary_placeholders = [tf.placeholder(tf.float32) for _ in range(len(summary_vars))]
         update_ops = [summary_vars[i].assign(summary_placeholders[i]) for i in range(len(summary_vars))]
         summary_op = tf.summary.merge_all()
@@ -195,7 +193,7 @@ if __name__ == "__main__":
 
             # if done, plot the score over episodes
             if done:
-                stats = [score, agent.avg_q_max / float(step), step, agent.avg_loss / float(step)]
+                stats = [score, agent.avg_q_max / float(step), agent.avg_loss / float(step)]
                 for i in range(len(stats)):
                     agent.sess.run(agent.update_ops[i], feed_dict={agent.summary_placeholders[i]: float(stats[i])})
                 summary_str = agent.sess.run(agent.summary_op)
