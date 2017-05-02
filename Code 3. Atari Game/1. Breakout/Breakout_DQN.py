@@ -15,11 +15,11 @@ EPISODES = 50000
 
 
 class DQNAgent:
-    def __init__(self, action_size):
-        self.render = False
+    def __init__(self):
+        self.render = True
         # environment settings
         self.state_size = (84, 84, 4)
-        self.action_size = action_size
+        self.action_size = 3
         # parameters about epsilon
         self.epsilon = 1.0
         self.epsilon_start, self.epsilon_end = 1.0, 0.1
@@ -27,7 +27,7 @@ class DQNAgent:
         # parameters about training
         self.batch_size = 32
         self.discount_factor = 0.99
-        self.train_start = 200
+        self.train_start = 20000
         self.update_target_interval = 10000
         self.memory = deque(maxlen=200000)
         # build model and target model. Then update target model with model
@@ -75,8 +75,8 @@ class DQNAgent:
             return np.argmax(self.model.predict(history)[0])
 
     # save sample <s,a,r,s'> to the replay memory
-    def replay_memory(self, history, action, reward, next_history, live):
-        self.memory.append((np.copy(history), action, reward, np.copy(next_history), live))
+    def replay_memory(self, history, action, reward, next_history, alive):
+        self.memory.append((np.copy(history), action, reward, np.copy(next_history), alive))
 
     def train_replay(self):
         if len(self.memory) < self.train_start:
@@ -89,24 +89,23 @@ class DQNAgent:
 
         history = np.zeros((self.batch_size, self.state_size[0], self.state_size[1], self.state_size[2]))
         next_history = np.zeros((self.batch_size, self.state_size[0], self.state_size[1], self.state_size[2]))
-        action, reward, live = [], [], []
+        action, reward, alive = [], [], []
         for i in range(self.batch_size):
             history[i] = np.float32(mini_batch[i][0] / 255.)
             action.append(mini_batch[i][1])
             reward.append(mini_batch[i][2])
             next_history[i] = np.float32(mini_batch[i][3] / 255.)
-            live.append(mini_batch[i][4])
+            alive.append(mini_batch[i][4])
 
-        target_value = reward + np.array(live) * self.discount_factor * np.amax(self.target_model.predict(next_history))
+        target_value = reward + np.array(alive) * self.discount_factor * np.amax(self.target_model.predict(next_history)
+                                                                                 , axis=1)
         target = self.model.predict(history)
+
         for i in range(self.batch_size):
             target[i][action[i]] = target_value[i]
 
         loss = self.model.fit(history, target, batch_size=self.batch_size, epochs=1, verbose=0)
         self.avg_loss += loss.history["loss"][0]
-
-    def save_model(self, name):
-        self.model.save_weights(name)
 
     def setup_summary(self):
         episode_total_reward = tf.Variable(0.)
@@ -129,20 +128,18 @@ def pre_processing(observe):
     processed_observe = np.uint8(resize(rgb2gray(observe), (84, 84), mode='constant') * 255)
     return processed_observe
 
+
 if __name__ == "__main__":
     # In case of BreakoutDeterministic-v3, always skip 4 frames
     env = gym.make('BreakoutDeterministic-v3')
-    # get size of action from environment
-    action_size = env.action_space.n
-    agent = DQNAgent(action_size)
+    agent = DQNAgent()
 
     scores, episodes, global_step = [], [], 0
 
     for e in range(EPISODES):
         done = False
-        dead = False
         # 1 episode = 5 lives
-        step, score, start_life = 0, 0, 5
+        step, score, fake_action, start_life = 0, 0, 0, 5
         observe = env.reset()
 
         # At start of episode, there is no preceding frame. So just copy initial states to make history
@@ -153,47 +150,49 @@ if __name__ == "__main__":
         while not done:
             if agent.render:
                 env.render()
-            global_step += 1
             step += 1
-            live = 1
-            # get action for the current history and go one step in environment
+            alive = 1
+
             action = agent.get_action(history)
-            observe, reward, done, info = env.step(action)
+            if action == 0: fake_action = 1
+            if action == 1: fake_action = 4
+            if action == 2: fake_action = 5
+            observe, reward, done, info = env.step(fake_action)
+            score += reward
+            # clip reward between -1 and 1 to improve learning performance
             reward = np.clip(reward, -1, 1)
-            # pre-process the observation --> history
+
             next_state = pre_processing(observe)
             next_state = np.reshape([next_state], (1, 84, 84, 1))
             next_history = np.append(history[:, :, :, 1:], next_state, axis=3)
-
+            # get average max q function to see the training performance
             agent.avg_q_max += np.amax(agent.model.predict(np.float32(history / 255.))[0])
 
-            # if the ball is fall, then the agent is dead --> episode is not over
+            # if the ball is fall, then the alive of agent is False --> consider when calculating target
             if start_life > info['ale.lives']:
-                live = 0
+                alive = 0
                 start_life = info['ale.lives']
 
-            # save the sample <s, a, r, s'> to the replay memory
-            agent.replay_memory(history, action, reward, next_history, live)
-            # train model with replay memory
+            agent.replay_memory(history, action, reward, next_history, alive)
+            history = next_history
+
             agent.train_replay()
-            # update the target model with model
+
             if global_step % agent.update_target_interval == 0:
                 agent.update_target_model()
 
-            score += reward
-            history = next_history
-
-            # if done, plot the score over episodes
+            # every episode, the result is recorded
             if done:
-                print("episode:", e, "  score:", score, "  epsilon:", agent.epsilon, "  global_step:", global_step,
-                      "  average_q:", agent.avg_q_max/float(step), "  average loss:", agent.avg_loss/float(step))
-
                 stats = [score, agent.avg_q_max / float(step), agent.avg_loss / float(step)]
                 for i in range(len(stats)):
                     agent.sess.run(agent.update_ops[i], feed_dict={agent.summary_placeholders[i]: float(stats[i])})
                 summary_str = agent.sess.run(agent.summary_op)
                 agent.summary_writer.add_summary(summary_str, e + 1)
+
+                global_step = global_step + step
+                print("episode:", e, "  score:", score, "  epsilon:", agent.epsilon, "  global_step:", global_step,
+                      "  average_max_q:", stats[1], "  average loss:", stats[2], " steps:", step)
                 agent.avg_q_max, agent.avg_loss = 0, 0
 
         if e % 1000 == 0:
-            agent.save_model("./save_model/Breakout_DQN.h5")
+            agent.model.save_weights("./save_model/Breakout_DQN.h5")
