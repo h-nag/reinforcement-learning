@@ -170,7 +170,7 @@ if __name__ == "__main__":
             # pre-process the observation --> history
             next_state = pre_processing(observe)
             next_state = np.reshape([next_state], (1, 84, 84, 1))
-            next_history = np.append(history[:, :, :, :3], next_state, axis=3)
+            next_history = np.append(history[:, :, :, 1:], next_state, axis=3)
 
             agent.avg_q_max += np.amax(agent.model.predict(np.float32(history / 255.))[0])
 
