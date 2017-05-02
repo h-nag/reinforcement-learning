@@ -1,5 +1,4 @@
 import gym
-import pylab
 import random
 import numpy as np
 import tensorflow as tf
@@ -23,21 +22,15 @@ class DQNAgent:
         self.action_size = action_size
         # parameters about epsilon
         self.epsilon = 1.0
-        self.epsilon_start = 1.0
-        self.epsilon_end = 0.1
-        self.epsilon_decay = 1000000.
-        self.epsilon_decay_step = (self.epsilon_start - self.epsilon_end) * 4 / self.epsilon_decay
+        self.epsilon_start, self.epsilon_end = 1.0, 0.1
+        self.epsilon_decay = (self.epsilon_start - self.epsilon_end) / 1000000.
 
         self.batch_size = 32
         self.train_start = 20000
-        self.update_target_rate = 10000
+        self.update_target_interval = 10000
         self.discount_factor = 0.99
         self.memory = deque(maxlen=200000)
         self.no_op_steps = 30
-        # optimizer parameters
-        self.learning_rate = 0.00025
-        self.momentum = 0.95
-        self.min_gradient = 0.01
         # build
         self.model = self.build_model()
         self.target_model = self.build_model()
@@ -46,13 +39,12 @@ class DQNAgent:
         self.sess = tf.InteractiveSession()
         K.set_session(self.sess)
 
-        self.avg_q_max , self.avg_loss = 0, 0
+        self.avg_q_max, self.avg_loss = 0, 0
         self.summary_placeholders, self.update_ops, self.summary_op = self.setup_summary()
         self.summary_writer = tf.summary.FileWriter('summary/Breakout_DQN', self.sess.graph)
         self.sess.run(tf.global_variables_initializer())
 
-    # if the error is in the interval [-1, 1], then the cost is quadratic to the error
-    # But outside the interval, the cost is linear to the error
+    # use huber loss for the training. This improves learning process
     def huber_loss(self, target, prediction):
         error = tf.reduce_sum(target - prediction, reduction_indices=1)
         return tf.where(tf.abs(error) < 1, 0.5 * tf.square(error), tf.abs(error) - 0.5)
@@ -68,8 +60,7 @@ class DQNAgent:
         model.add(Dense(512, activation='relu'))
         model.add(Dense(self.action_size))
         model.summary()
-        model.compile(loss=self.huber_loss, optimizer=RMSprop(
-            lr=self.learning_rate, rho=self.momentum, epsilon=self.min_gradient))
+        model.compile(loss=self.huber_loss, optimizer=RMSprop(lr=0.00025, rho=0.95, epsilon=0.01))
         return model
 
     # after some time interval update the target model to be same with model
@@ -82,19 +73,17 @@ class DQNAgent:
         if np.random.rand() <= self.epsilon:
             return random.randrange(self.action_size)
         else:
-            q_value = self.model.predict(history)
-            return np.argmax(q_value[0])
+            return np.argmax(self.model.predict(history)[0])
 
     # save sample <s,a,r,s'> to the replay memory
     def replay_memory(self, history, action, reward, next_history, dead):
-        self.memory.append((history, action, reward, next_history, dead))
+        self.memory.append((np.copy(history), action, reward, np.copy(next_history), dead))
 
-    # pick samples randomly from replay memory (with batch_size)
     def train_replay(self):
         if len(self.memory) < self.train_start:
             return
         if self.epsilon > self.epsilon_end:
-            self.epsilon -= self.epsilon_decay_step
+            self.epsilon -= self.epsilon_decay
         mini_batch = random.sample(self.memory, self.batch_size)
 
         history = np.zeros((self.batch_size, self.state_size[0], self.state_size[1], self.state_size[2]))
@@ -108,19 +97,14 @@ class DQNAgent:
             reward.append(mini_batch[i][2])
             dead.append(mini_batch[i][4])
 
+        dead = np.array(dead) + 0
+        target_value = reward + (1 - dead)*self.discount_factor*np.amax(self.target_model.predict(next_history), axis=1)
         target = self.model.predict(history)
-        target_val = self.target_model.predict(next_history)
         for i in range(self.batch_size):
-            if dead[i]:
-                target[i][action[i]] = reward[i]
-            else:
-                target[i][action[i]] = reward[i] + self.discount_factor * np.amax(target_val[i])
+            target[i][action[i]] = target_value[i]
 
         loss = self.model.fit(history, target, batch_size=self.batch_size, epochs=1, verbose=0)
         self.avg_loss += loss.history["loss"][0]
-
-    def load_model(self, name):
-        self.model.load_weights(name)
 
     def save_model(self, name):
         self.model.save_weights(name)
@@ -143,12 +127,10 @@ class DQNAgent:
         return summary_placeholders, update_ops, summary_op
 
 
-# 210*160*3(color) --> 84*84(mono)
-# float --> integer (to reduce the size of replay memory)
+# 210*160*3(color) --> 84*84(mono) and float --> integer (to reduce the size of replay memory)
 def pre_processing(observe):
     processed_observe = np.uint8(resize(rgb2gray(observe), (84, 84), mode='constant') * 255)
     return processed_observe
-
 
 if __name__ == "__main__":
     # In case of BreakoutDeterministic-v3, always skip 4 frames
@@ -166,7 +148,6 @@ if __name__ == "__main__":
         step, score, start_life = 0, 0, 5
         observe = env.reset()
 
-        # this is one of DeepMind's idea.
         # just do nothing at the start of episode to avoid sub-optimal
         for _ in range(random.randint(1, agent.no_op_steps)):
             observe, _, _, _ = env.step(1)
@@ -189,7 +170,7 @@ if __name__ == "__main__":
             # pre-process the observation --> history
             next_state = pre_processing(observe)
             next_state = np.reshape([next_state], (1, 84, 84, 1))
-            next_history = np.append(next_state, history[:, :, :, :3], axis=3)
+            next_history = np.append(history[:, :, :, :3], next_state, axis=3)
 
             agent.avg_q_max += np.amax(agent.model.predict(np.float32(history / 255.))[0])
 
@@ -200,10 +181,9 @@ if __name__ == "__main__":
 
             # save the sample <s, a, r, s'> to the replay memory
             agent.replay_memory(history, action, reward, next_history, dead)
-            # every some time interval, train model
             agent.train_replay()
             # update the target model with model
-            if global_step % agent.update_target_rate == 0:
+            if global_step % agent.update_target_interval == 0:
                 agent.update_target_model()
             score += reward
 
@@ -215,22 +195,15 @@ if __name__ == "__main__":
 
             # if done, plot the score over episodes
             if done:
-                scores.append(score)
-                episodes.append(e)
-                pylab.plot(episodes, scores, 'b')
-
-                if global_step > agent.train_start:
-                    stats = [score, agent.avg_q_max / float(step), step, agent.avg_loss / float(step)]
-                    for i in range(len(stats)):
-                        agent.sess.run(agent.update_ops[i], feed_dict={
-                            agent.summary_placeholders[i]: float(stats[i])
-                        })
-                    summary_str = agent.sess.run(agent.summary_op)
-                    agent.summary_writer.add_summary(summary_str, e + 1)
+                stats = [score, agent.avg_q_max / float(step), step, agent.avg_loss / float(step)]
+                for i in range(len(stats)):
+                    agent.sess.run(agent.update_ops[i], feed_dict={agent.summary_placeholders[i]: float(stats[i])})
+                summary_str = agent.sess.run(agent.summary_op)
+                agent.summary_writer.add_summary(summary_str, e + 1)
 
                 print("episode:", e, "  score:", score, "  memory length:", len(agent.memory),
-                      "  epsilon:", agent.epsilon, "  global_step:", global_step, "  average_q:", agent.avg_q_max/float(step),
-                      "  average loss:", agent.avg_loss/float(step))
+                      "  epsilon:", agent.epsilon, "  global_step:", global_step, "  average_q:",
+                      agent.avg_q_max/float(step), "  average loss:", agent.avg_loss/float(step))
 
                 agent.avg_q_max, agent.avg_loss = 0, 0
 
