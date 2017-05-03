@@ -13,17 +13,17 @@ EPISODES = 50000
 
 
 class DQNAgent:
-    def __init__(self, action_size):
+    def __init__(self):
         # environment settings
         self.state_size = (84, 84, 4)
-        self.action_size = action_size
+        self.action_size = 3
         # parameters about epsilon
         self.epsilon = 0.01
         # parameters about training
         self.discount_factor = 0.99
         # build model and target model. Then update target model with model
         self.model = self.build_model()
-        self.model.load_weights("breakout_dqn.h5")
+        self.model.load_weights("Breakout_DQN.h5")
 
     # use huber loss for the training. This improves learning process
     def huber_loss(self, target, prediction):
@@ -61,14 +61,12 @@ def pre_processing(observe):
 if __name__ == "__main__":
     # In case of BreakoutDeterministic-v3, always skip 4 frames
     env = gym.make('BreakoutDeterministic-v3')
-    # get size of action from environment
-    action_size = env.action_space.n
-    agent = DQNAgent(action_size)
+    agent = DQNAgent()
 
     for e in range(EPISODES):
         done = False
         observe = env.reset()
-
+        fake_action = 0
         # At start of episode, there is no preceding frame. So just copy initial states to make history
         state = pre_processing(observe)
         history = np.stack((state, state, state, state), axis=2)
@@ -78,10 +76,12 @@ if __name__ == "__main__":
             env.render()
             # get action for the current history and go one step in environment
             action = agent.get_action(history)
-            observe, reward, done, info = env.step(action)
+            if action == 0: fake_action = 1
+            if action == 1: fake_action = 4
+            if action == 2: fake_action = 5
+            observe, reward, done, info = env.step(fake_action)
             # pre-process the observation --> history
             next_state = pre_processing(observe)
             next_state = np.reshape([next_state], (1, 84, 84, 1))
             next_history = np.append(history[:, :, :, 1:], next_state, axis=3)
-
             history = next_history

@@ -6,17 +6,15 @@ from collections import deque
 from skimage.color import rgb2gray
 from skimage.transform import resize
 from keras.models import Sequential
-from keras.optimizers import RMSprop
 from keras.layers import Dense, Flatten
 from keras.layers.convolutional import Conv2D
-from keras import backend as K
 
 EPISODES = 50000
 
 
 class DQNAgent:
     def __init__(self):
-        self.render = True
+        self.render = False
         # environment settings
         self.state_size = (84, 84, 4)
         self.action_size = 3
@@ -27,9 +25,9 @@ class DQNAgent:
         # parameters about training
         self.batch_size = 32
         self.discount_factor = 0.99
-        self.train_start = 20000
+        self.train_start = 50000
         self.update_target_interval = 10000
-        self.memory = deque(maxlen=200000)
+        self.memory = deque(maxlen=400000)
         # build model and target model. Then update target model with model
         self.model = self.build_model()
         self.target_model = self.build_model()
@@ -37,7 +35,6 @@ class DQNAgent:
 
         # setting tf summary for tensorboard
         self.sess = tf.InteractiveSession()
-        K.set_session(self.sess)
         self.avg_q_max, self.avg_loss = 0, 0
         self.summary_placeholders, self.update_ops, self.summary_op = self.setup_summary()
         self.summary_writer = tf.summary.FileWriter('summary/Breakout_DQN', self.sess.graph)
@@ -59,7 +56,7 @@ class DQNAgent:
         model.add(Dense(512, activation='relu'))
         model.add(Dense(self.action_size))
         model.summary()
-        model.compile(loss=self.huber_loss, optimizer=RMSprop(lr=0.00025, rho=0.95, epsilon=0.01))
+        model.compile(loss=self.huber_loss, optimizer=tf.train.RMSPropOptimizer(0.00025, momentum=0.95, epsilon=0.01))
         return model
 
     # after some time interval update the target model to be same with model
@@ -76,7 +73,7 @@ class DQNAgent:
 
     # save sample <s,a,r,s'> to the replay memory
     def replay_memory(self, history, action, reward, next_history, alive):
-        self.memory.append((np.copy(history), action, reward, np.copy(next_history), alive))
+        self.memory.append((history, action, reward, next_history, alive))
 
     def train_replay(self):
         if len(self.memory) < self.train_start:
