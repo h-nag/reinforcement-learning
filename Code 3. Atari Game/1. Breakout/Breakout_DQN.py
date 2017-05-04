@@ -101,8 +101,7 @@ class DQNAgent:
         for i in range(self.batch_size):
             target[i][action[i]] = target_value[i]
 
-        loss = self.model.fit(history, target, batch_size=self.batch_size, epochs=1, verbose=0)
-        self.avg_loss += loss.history["loss"][0]
+        self.avg_loss += self.model.train_on_batch(np.array(history), np.array(target))
 
     def setup_summary(self):
         episode_total_reward = tf.Variable(0.)

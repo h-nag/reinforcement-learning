@@ -23,7 +23,7 @@ class DQNAgent:
         self.discount_factor = 0.99
         # build model and target model. Then update target model with model
         self.model = self.build_model()
-        self.model.load_weights("Breakout_DQN.h5")
+        self.model.load_weights("Breakout_DQN2.h5")
 
     # use huber loss for the training. This improves learning process
     def huber_loss(self, target, prediction):
@@ -41,7 +41,7 @@ class DQNAgent:
         model.add(Dense(512, activation='relu'))
         model.add(Dense(self.action_size))
         model.summary()
-        model.compile(loss=self.huber_loss, optimizer=RMSprop(lr=0.00025, rho=0.95, epsilon=0.01))
+        model.compile(loss=self.huber_loss, optimizer=tf.train.RMSPropOptimizer(0.00025, momentum=0.95, epsilon=0.01))
         return model
 
     # get action from model using epsilon-greedy policy
